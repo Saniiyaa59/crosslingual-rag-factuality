@@ -3,6 +3,9 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 import faiss
 import os
+import torch
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def chunk_text(text, chunk_size=200, overlap=50):
     words = text.split()
@@ -27,7 +30,8 @@ if __name__ == "__main__":
     print(f"Total chunks: {len(all_chunks)}")
 
     # Embed
-    model = SentenceTransformer("BAAI/bge-m3")
+    model = SentenceTransformer("BAAI/bge-m3", device=device)
+    print(f"Using device: {device}")
     model.max_seq_length = 512
     embeddings = model.encode(
         all_chunks,
