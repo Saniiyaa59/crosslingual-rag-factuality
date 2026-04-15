@@ -89,7 +89,7 @@ python3.10 -m venv .venv
 source .venv/bin/activate
 
 # Install dependencies
-pip install datasets faiss-cpu sentence-transformers transformers torch
+pip install -r requirements.txt
 ```
 
 ---
@@ -97,14 +97,14 @@ pip install datasets faiss-cpu sentence-transformers transformers torch
 ## Project Structure
 
 ```
-xling-rag/
-├── data/               # Data loading and preprocessing scripts
-├── index/              # FAISS index building
-├── retrieval/          # Retrieval functions (dense + BM25 ablation)
-├── generation/         # Prompt construction and generation
-├── evaluation/         # Metric computation
-├── notebooks/          # Exploratory notebooks
-├── results/            # Output files and scores
+crosslingual-rag-factuality/
+├── data/               # Cached TyDi QA splits and FAISS index
+├── scripts/
+│   ├── index.py        # Build English FAISS index (bge-m3)
+│   ├── build_wiki_index.py  # Build Wikipedia FAISS index
+│   ├── baseline.py     # Condition A — no retrieval
+│   ├── rag_crosslingual.py  # Condition C — cross-lingual RAG
+│   └── data.ipynb      # Exploratory notebook
 └── README.md
 ```
 
