@@ -2,7 +2,7 @@
 
 **CS505 NLP Final Project — Boston University**
 
-Aryan Sharma · Saniya Sekhon · Visista Jayanti · Pamela Oliveira
+Saniya Sekhon · Aryan Sharma · Visista Jayanti · Pamela Oliveira
 
 ---
 
