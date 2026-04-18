@@ -143,7 +143,17 @@ This downloads 50k English Wikipedia articles, chunks them into 200-word passage
 
 > Takes ~30 minutes on a V100 GPU.
 
-### Step 3 — Run Condition A (no retrieval baseline)
+### Step 3 — Build the Wikipedia FAISS index (run on Kaggle code)
+
+```bash
+python scripts/build_telugu_index.py
+```
+
+This downloads 50k Telugu Wikipedia articles, chunks them into 200-word passages with 50-word overlap, encodes them with `BAAI/bge-m3`, and saves the FAISS index to `data/index/`.
+
+> Takes ~75 minutes on a T4 GPU.
+
+### Step 4 — Run Condition A (no retrieval baseline)
 
 ```bash
 python scripts/baseline.py
@@ -151,7 +161,15 @@ python scripts/baseline.py
 
 Outputs predictions to stdout. Results saved to `data/results_baseline.json`.
 
-### Step 4 — Run Condition C (cross-lingual RAG)
+### Step 5 — Run Condition B (Monolingual RAG (Telugu))
+
+```bash
+python scripts/rag_monolingual.py
+```
+
+Outputs predictions to stdout. Results saved to `data/results_monolingual.json`.
+
+### Step 6 — Run Condition C (cross-lingual RAG)
 
 ```bash
 python scripts/rag_crosslingual.py
