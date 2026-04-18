@@ -21,12 +21,12 @@ def chunk_text(text, chunk_size=200, overlap=50):
 
 
 if __name__ == "__main__":
-    # Load Telugu Wikipedia — mirrors build_wiki_index.py but uses Telugu dump
+    # Load Telugu Wikipedia
     print("Loading Telugu Wikipedia...")
     telugu_wiki = load_dataset("wikimedia/wikipedia", "20231101.te", split="train")
     print(f"Total Telugu Wikipedia articles: {len(telugu_wiki)}")
 
-    # Chunk all articles — same logic as build_wiki_index.py
+    # Chunk all articles
     NUM_ARTICLES = 20000  # cap for Kaggle/Colab; increase on SCC
     print(f"Chunking {NUM_ARTICLES} articles...")
     all_chunks = []
@@ -35,23 +35,23 @@ if __name__ == "__main__":
         all_chunks.extend(chunks)
     print(f"Total chunks: {len(all_chunks)}")
 
-    # Embed — same model and settings as build_wiki_index.py
+    # Embed
     model = SentenceTransformer("BAAI/bge-m3", device=device)
     print(f"Using device: {device}")
     model.max_seq_length = 512
     embeddings = model.encode(
         all_chunks,
-        batch_size=64,           # same as build_wiki_index.py
+        batch_size=64,
         show_progress_bar=True,
-        normalize_embeddings=True  # same as build_wiki_index.py
+        normalize_embeddings=True
     )
 
-    # Build FAISS index — same IndexFlatIP as build_wiki_index.py
+    # Build FAISS index
     dim = embeddings.shape[1]
     index = faiss.IndexFlatIP(dim)
     index.add(embeddings.astype(np.float32))
 
-    # Save — same directory convention as build_wiki_index.py
+    # Save
     os.makedirs("data/index", exist_ok=True)
     faiss.write_index(index, "data/index/telugu_wiki_bge.faiss")
     np.save("data/index/telugu_wiki_passages.npy", np.array(all_chunks))

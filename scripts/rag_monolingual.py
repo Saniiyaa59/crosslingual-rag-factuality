@@ -9,11 +9,11 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    # Load data — same as rag.py
+    # Load data
     telugu = load_from_disk("data/tydiqa_telugu_train")
     sample = telugu.select(range(10))
 
-    # Load retriever — same model and settings as rag.py
+    # Load retriever
     retriever = SentenceTransformer("BAAI/bge-m3", device=device)
     retriever.max_seq_length = 512
 
@@ -24,7 +24,7 @@ if __name__ == "__main__":
     )
     print(f"Index loaded: {index.ntotal} passages")
 
-    # Load generator — same model as baseline.py and rag.py
+    # Load generator
     model_name = "bigscience/mt0-base"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(device)
@@ -40,7 +40,7 @@ if __name__ == "__main__":
         retrieved = retrieve(question, retriever, index, passages, k=3)
         context = "\n\n".join(retrieved)
 
-        # Prompt — same structure as rag.py
+        # Prompt
         prompt = f"Answer the following question using the context below.\n\nContext:\n{context}\n\nQuestion: {question}"
 
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512).to(device)
@@ -55,14 +55,13 @@ if __name__ == "__main__":
             "retrieved_passages": retrieved
         })
 
-        # Same print format as rag.py
         print(f"Q: {question}")
         print(f"Gold: {gold}")
         print(f"Pred: {prediction}")
         print(f"Retrieved: {retrieved[0][:200]}...")
         print("---")
 
-    # Save results — same pattern as rag.py
+    # Save results
     with open("data/results_monolingual.json", "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
 
