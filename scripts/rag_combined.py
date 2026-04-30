@@ -12,7 +12,7 @@ def load_index(index_path, passages_path):
     passages = np.load(passages_path, allow_pickle=True).tolist()
     return index, passages
 
-def retrieve(query, retriever, index, passages, k=5):
+def retrieve(query, retriever, index, passages, k=3):
     query_embedding = retriever.encode(
         [query],
         normalize_embeddings=True
@@ -27,8 +27,8 @@ if __name__ == "__main__":
     telugu = load_from_disk("data/tydiqa_telugu_train")
     sample = telugu.select(range(10))
 
-    # ── Phase 1: translate + retrieve (NLLB + BGE-M3) ──────────────────────
-    print("Phase 1: translating and retrieving...")
+    # ── Phase 1: translate + retrieve from both indexes ────────────────────
+    print("Phase 1: translating and retrieving from both indexes...")
 
     translator = pipeline(
         "translation",
@@ -42,28 +42,38 @@ if __name__ == "__main__":
     retriever = SentenceTransformer("BAAI/bge-m3", device=device)
     retriever.max_seq_length = 512
 
-    index, passages = load_index(
+    en_index, en_passages = load_index(
         "data/index/wiki_bge.faiss",
         "data/index/wiki_passages.npy"
     )
+    te_index, te_passages = load_index(
+        "data/index/telugu_wiki_bge.faiss",
+        "data/index/telugu_wiki_passages.npy"
+    )
+    print(f"English index: {en_index.ntotal} passages")
+    print(f"Telugu index:  {te_index.ntotal} passages")
 
-    # Pre-compute all translations and retrievals before loading the generator
     rows = []
     for row in sample:
         question = row["question"]
         gold = row["answers"]["text"][0]
+
         english_query = translator(question)[0]["translation_text"]
         combined_query = english_query + " " + question
-        retrieved = retrieve(combined_query, retriever, index, passages, k=5)
+
+        # k=3 from each index → 6 passages total
+        retrieved_en = retrieve(combined_query, retriever, en_index, en_passages, k=3)
+        retrieved_te = retrieve(question, retriever, te_index, te_passages, k=3)
+
         rows.append({
             "question": question,
             "english_query": english_query,
             "gold": gold,
-            "retrieved_passages": retrieved,
+            "retrieved_en": retrieved_en,
+            "retrieved_te": retrieved_te,
         })
         print(f"  translated: {english_query}")
 
-    # Free NLLB + BGE-M3 from GPU before loading Qwen
     del translator, retriever
     gc.collect()
     torch.cuda.empty_cache()
@@ -82,7 +92,8 @@ if __name__ == "__main__":
     results = []
     for row in rows:
         question = row["question"]
-        context = "\n\n".join(row["retrieved_passages"])
+        # Telugu passages first so the model sees native-language context early
+        context = "\n\n".join(row["retrieved_te"] + row["retrieved_en"])
 
         messages = [
             {
@@ -113,14 +124,16 @@ if __name__ == "__main__":
             "english_query": row["english_query"],
             "gold": row["gold"],
             "prediction": prediction,
-            "retrieved_passages": row["retrieved_passages"],
+            "retrieved_te": row["retrieved_te"],
+            "retrieved_en": row["retrieved_en"],
         })
         print(f"Q: {question}")
         print(f"EN: {row['english_query']}")
         print(f"Gold: {row['gold']}")
         print(f"Pred: {prediction}")
-        print(f"Retrieved: {row['retrieved_passages'][0][:200]}...")
+        print(f"Retrieved (te): {row['retrieved_te'][0][:150]}...")
+        print(f"Retrieved (en): {row['retrieved_en'][0][:150]}...")
         print("---")
 
-    with open("data/results_crosslingual_wiki.json", "w", encoding="utf-8") as f:
+    with open("data/results_combined.json", "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
