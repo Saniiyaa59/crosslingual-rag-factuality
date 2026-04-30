@@ -1,5 +1,5 @@
 from datasets import load_from_disk
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
+from transformers import pipeline
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
@@ -11,7 +11,7 @@ def load_index(index_path, passages_path):
     passages = np.load(passages_path, allow_pickle=True).tolist()
     return index, passages
 
-def retrieve(query, retriever, index, passages, k=3):
+def retrieve(query, retriever, index, passages, k=5):
     query_embedding = retriever.encode(
         [query],
         normalize_embeddings=True
@@ -47,11 +47,13 @@ if __name__ == "__main__":
         "data/index/wiki_passages.npy"
     )
 
-    # Load generator
-    model_name = "bigscience/mt0-base"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(device)
-    model.eval()
+    # Load Qwen generator (no license gate, strong multilingual)
+    generator = pipeline(
+        "text-generation",
+        model="Qwen/Qwen2.5-7B-Instruct",
+        device_map="auto",
+        torch_dtype=torch.float16,
+    )
 
     results = []
 
@@ -59,25 +61,37 @@ if __name__ == "__main__":
         question = row["question"]
         gold = row["answers"]["text"][0]
 
-        # Translate Telugu query to English before retrieval
+        # Translate Telugu query to English
         english_query = translator(question)[0]["translation_text"]
 
-        # Retrieve top-3 Wikipedia passages using the English query
-        retrieved = retrieve(english_query, retriever, index, passages, k=3)
+        # Combined query preserves named entities that NLLB mistranslates
+        combined_query = english_query + " " + question
+        retrieved = retrieve(combined_query, retriever, index, passages, k=5)
         context = "\n\n".join(retrieved)
 
-        # Prompt with retrieved context; ask explicitly for a Telugu answer
-        prompt = (
-            f"Answer the following question in Telugu using the context below.\n\n"
-            f"Context:\n{context}\n\n"
-            f"Question: {question}\n"
-            f"Telugu Answer:"
-        )
-
-        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024).to(device)
-        with torch.no_grad():
-            outputs = model.generate(**inputs, max_new_tokens=100)
-        prediction = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        # Llama generates the answer in Telugu from English context
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a multilingual QA assistant. "
+                    "Use the provided context to answer the question. "
+                    "Always answer in the same language as the question, "
+                    "even if the context is in a different language. "
+                    "Be concise — one sentence or less."
+                )
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Context:\n{context}\n\n"
+                    f"Question: {question}\n\n"
+                    f"Answer in Telugu using only information from the context above."
+                )
+            }
+        ]
+        out = generator(messages, max_new_tokens=128, do_sample=False)
+        prediction = out[0]["generated_text"][-1]["content"].strip()
 
         results.append({
             "question": question,
