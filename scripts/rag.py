@@ -5,6 +5,7 @@ import faiss
 import numpy as np
 import torch
 import json
+import gc
 
 def load_index(index_path, passages_path):
     index = faiss.read_index(index_path)
@@ -23,11 +24,12 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    # Load data
     telugu = load_from_disk("data/tydiqa_telugu_train")
     sample = telugu.select(range(10))
 
-    # Load query translator (Telugu → English, used before retrieval)
+    # ── Phase 1: translate + retrieve (NLLB + BGE-M3) ──────────────────────
+    print("Phase 1: translating and retrieving...")
+
     translator = pipeline(
         "translation",
         model="facebook/nllb-200-distilled-600M",
@@ -37,17 +39,39 @@ if __name__ == "__main__":
         max_length=256,
     )
 
-    # Load retriever
     retriever = SentenceTransformer("BAAI/bge-m3", device=device)
     retriever.max_seq_length = 512
 
-    # Load index
     index, passages = load_index(
         "data/index/wiki_bge.faiss",
         "data/index/wiki_passages.npy"
     )
 
-    # Load Qwen generator (no license gate, strong multilingual)
+    # Pre-compute all translations and retrievals before loading the generator
+    rows = []
+    for row in sample:
+        question = row["question"]
+        gold = row["answers"]["text"][0]
+        english_query = translator(question)[0]["translation_text"]
+        combined_query = english_query + " " + question
+        retrieved = retrieve(combined_query, retriever, index, passages, k=5)
+        rows.append({
+            "question": question,
+            "english_query": english_query,
+            "gold": gold,
+            "retrieved_passages": retrieved,
+        })
+        print(f"  translated: {english_query}")
+
+    # Free NLLB + BGE-M3 from GPU before loading Qwen
+    del translator, retriever
+    gc.collect()
+    torch.cuda.empty_cache()
+    print("Phase 1 done. GPU memory freed.")
+
+    # ── Phase 2: generate with Qwen ────────────────────────────────────────
+    print("Phase 2: loading Qwen and generating...")
+
     generator = pipeline(
         "text-generation",
         model="Qwen/Qwen2.5-7B-Instruct",
@@ -56,20 +80,10 @@ if __name__ == "__main__":
     )
 
     results = []
-
-    for row in sample:
+    for row in rows:
         question = row["question"]
-        gold = row["answers"]["text"][0]
+        context = "\n\n".join(row["retrieved_passages"])
 
-        # Translate Telugu query to English
-        english_query = translator(question)[0]["translation_text"]
-
-        # Combined query preserves named entities that NLLB mistranslates
-        combined_query = english_query + " " + question
-        retrieved = retrieve(combined_query, retriever, index, passages, k=5)
-        context = "\n\n".join(retrieved)
-
-        # Llama generates the answer in Telugu from English context
         messages = [
             {
                 "role": "system",
@@ -90,21 +104,22 @@ if __name__ == "__main__":
                 )
             }
         ]
-        out = generator(messages, max_new_tokens=128, do_sample=False)
+        out = generator(messages, max_new_tokens=128, do_sample=False,
+                        temperature=None, top_p=None, top_k=None)
         prediction = out[0]["generated_text"][-1]["content"].strip()
 
         results.append({
             "question": question,
-            "english_query": english_query,
-            "gold": gold,
+            "english_query": row["english_query"],
+            "gold": row["gold"],
             "prediction": prediction,
-            "retrieved_passages": retrieved
+            "retrieved_passages": row["retrieved_passages"],
         })
         print(f"Q: {question}")
-        print(f"EN: {english_query}")
-        print(f"Gold: {gold}")
+        print(f"EN: {row['english_query']}")
+        print(f"Gold: {row['gold']}")
         print(f"Pred: {prediction}")
-        print(f"Retrieved: {retrieved[0][:200]}...")
+        print(f"Retrieved: {row['retrieved_passages'][0][:200]}...")
         print("---")
 
     with open("data/results_crosslingual_wiki.json", "w", encoding="utf-8") as f:
