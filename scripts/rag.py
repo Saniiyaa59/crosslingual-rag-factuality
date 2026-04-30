@@ -1,5 +1,5 @@
 from datasets import load_from_disk
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
@@ -27,6 +27,16 @@ if __name__ == "__main__":
     telugu = load_from_disk("data/tydiqa_telugu_train")
     sample = telugu.select(range(10))
 
+    # Load query translator (Telugu → English, used before retrieval)
+    translator = pipeline(
+        "translation",
+        model="facebook/nllb-200-distilled-600M",
+        src_lang="tel_Telu",
+        tgt_lang="eng_Latn",
+        device=0 if device == "cuda" else -1,
+        max_length=256,
+    )
+
     # Load retriever
     retriever = SentenceTransformer("BAAI/bge-m3", device=device)
     retriever.max_seq_length = 512
@@ -49,25 +59,35 @@ if __name__ == "__main__":
         question = row["question"]
         gold = row["answers"]["text"][0]
 
-        # Retrieve top-3 Wikipedia passages
-        retrieved = retrieve(question, retriever, index, passages, k=3)
+        # Translate Telugu query to English before retrieval
+        english_query = translator(question)[0]["translation_text"]
+
+        # Retrieve top-3 Wikipedia passages using the English query
+        retrieved = retrieve(english_query, retriever, index, passages, k=3)
         context = "\n\n".join(retrieved)
 
-        # Prompt with retrieved context
-        prompt = f"Answer the following question using the context below.\n\nContext:\n{context}\n\nQuestion: {question}"
+        # Prompt with retrieved context; ask explicitly for a Telugu answer
+        prompt = (
+            f"Answer the following question in Telugu using the context below.\n\n"
+            f"Context:\n{context}\n\n"
+            f"Question: {question}\n"
+            f"Telugu Answer:"
+        )
 
-        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512).to(device)
+        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024).to(device)
         with torch.no_grad():
             outputs = model.generate(**inputs, max_new_tokens=100)
         prediction = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
         results.append({
             "question": question,
+            "english_query": english_query,
             "gold": gold,
             "prediction": prediction,
             "retrieved_passages": retrieved
         })
         print(f"Q: {question}")
+        print(f"EN: {english_query}")
         print(f"Gold: {gold}")
         print(f"Pred: {prediction}")
         print(f"Retrieved: {retrieved[0][:200]}...")
