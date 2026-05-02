@@ -16,36 +16,59 @@ The core question: can a multilingual model read English evidence and still prod
 
 ## Research Hypothesis
 
-Cross-lingual RAG (retrieving English passages for a Telugu query) will outperform both monolingual RAG and direct prompting on factual accuracy and hallucination rate, because the English retrieval corpus is substantially richer than the Telugu one.
+Cross-lingual RAG (retrieving English passages for a Telugu query) will outperform both monolingual RAG and direct prompting on factual accuracy and hallucination rate, because the English retrieval corpus is substantially richer than the Telugu one. Combining both corpora (Condition D) is expected to further improve coverage.
 
 ---
 
 ## Pipeline
 
+### Condition C — Cross-lingual RAG
+
 ```
 Question (Telugu)
       ↓
+[NLLB-200-distilled-600M] → English translation
+      ↓
+combined_query = english_translation + " " + telugu_question
+      ↓
 [BGE-M3 encoder] → multilingual vector
       ↓
-FAISS index search → top-k English Wikipedia passages
+FAISS index search → top-5 English Wikipedia passages
       ↓
-Prompt: Telugu question + raw English passages
+Prompt: Telugu question + English passages
       ↓
-[mT0-base generator]
+[Qwen2.5-7B-Instruct]
       ↓
 Answer (Telugu)
+```
+
+### Condition D — Combined RAG (English + Telugu indexes)
+
+```
+Question (Telugu)
+      ↓
+[NLLB] → English translation → combined_query
+      │
+      ├── [BGE-M3] → top-3 English Wikipedia passages
+      └── [BGE-M3] → top-3 Telugu Wikipedia passages
+                              ↓
+                  Prompt: Telugu question + 6 passages
+                              ↓
+                  [Qwen2.5-7B-Instruct]
+                              ↓
+                       Answer (Telugu)
 ```
 
 ---
 
 ## Experimental Conditions
 
-| Condition | Description | Status |
-|-----------|-------------|--------|
-| **A — No retrieval** | Direct prompting with the Telugu question only | ✅ Done |
-| **B — Monolingual RAG** | Retrieve from Telugu Wikipedia passages | 🔲 In progress |
-| **C — Cross-lingual RAG** | Retrieve from English Wikipedia passages (untranslated) | ✅ Done |
-| **D — Cross-lingual RAG + Translation** | Same as C, but passages translated to Telugu via NLLB-200-600M | 🔲 Planned |
+| Condition | Description | Script | Status |
+|-----------|-------------|--------|--------|
+| **A — No retrieval** | Direct prompting with the Telugu question only | `baseline.py` | ✅ Done |
+| **B — Monolingual RAG** | Retrieve from Telugu Wikipedia; generate with Qwen | `rag_monolingual.py` | ✅ Done |
+| **C — Cross-lingual RAG** | Translate query with NLLB, retrieve from English Wikipedia, generate with Qwen | `rag.py` | ✅ Done |
+| **D — Combined RAG** | Retrieve from both English and Telugu Wikipedia indexes | `rag_combined.py` | ✅ Done |
 
 ---
 
@@ -54,7 +77,8 @@ Answer (Telugu)
 **TyDi QA** (Clark et al., 2020) — a multilingual QA dataset built from Wikipedia across 11 typologically diverse languages.
 
 - `question` + `answers` from the **Telugu split** → test queries and gold labels
-- English Wikipedia (50k articles, chunked) → retrieval corpus indexed with FAISS
+- English Wikipedia (50k articles, chunked) → cross-lingual retrieval corpus (Condition C, D)
+- Telugu Wikipedia (20k articles, chunked) → monolingual retrieval corpus (Condition B, D)
 
 ---
 
@@ -63,17 +87,19 @@ Answer (Telugu)
 | Role | Model |
 |------|-------|
 | Multilingual encoder | `BAAI/bge-m3` |
-| Generator | `bigscience/mt0-base` |
-| Translation (ablation only) | `facebook/nllb-200-distilled-600M` |
+| Query translator | `facebook/nllb-200-distilled-600M` |
+| Generator | `Qwen/Qwen2.5-7B-Instruct` |
+
+> **Note:** Qwen2.5-7B requires ~14GB GPU memory. Use a 40GB+ GPU (A100/A40) on SCC. On a 16GB V100, switch to `Qwen/Qwen2.5-3B-Instruct` in each script.
 
 ---
 
 ## Evaluation Metrics
 
-- **Character 3-gram Recall** — language-agnostic overlap metric suited to morphologically rich languages
+- **Exact Match (EM)** — predicted string exactly matches gold answer after normalization
+- **Character 3-gram Recall (Chr-3)** — language-agnostic overlap metric suited to morphologically rich languages
 - **Response Language Correctness (RLC)** — fraction of responses generated in Telugu (detects English fallback)
-- **LLM-as-a-Judge** — GPT-4o + Claude Sonnet majority vote for semantic accuracy
-- **Hallucination Rate** — manual annotation of outputs for unsupported factual claims
+- **LLM-as-a-Judge** — GPT-4o + Claude Sonnet majority vote for semantic accuracy (planned)
 
 ---
 
@@ -82,17 +108,31 @@ Answer (Telugu)
 ```
 crosslingual-rag-factuality/
 ├── data/
-│   ├── tydiqa_telugu_train/     # Cached Telugu TyDi QA split
-│   ├── tydiqa_english_train/    # Cached English TyDi QA split
+│   ├── tydiqa_telugu_train/          # Cached Telugu TyDi QA split
+│   ├── tydiqa_english_train/         # Cached English TyDi QA split
+│   ├── results_baseline.json         # Condition A outputs
+│   ├── results_monolingual.json      # Condition B outputs
+│   ├── results_crosslingual_wiki.json # Condition C outputs
+│   ├── results_combined.json         # Condition D outputs
 │   └── index/
-│       ├── wiki_bge.faiss       # FAISS index over Wikipedia chunks
-│       └── wiki_passages.npy    # Aligned passage texts
+│       ├── wiki_bge.faiss            # FAISS index over English Wikipedia chunks
+│       ├── wiki_passages.npy         # Aligned English passage texts
+│       ├── telugu_wiki_bge.faiss     # FAISS index over Telugu Wikipedia chunks
+│       └── telugu_wiki_passages.npy  # Aligned Telugu passage texts
 ├── scripts/
-│   ├── index.py                 # Build TyDi QA English FAISS index
-│   ├── build_wiki_index.py      # Build Wikipedia FAISS index (run on SCC)
-│   ├── baseline.py              # Condition A — no retrieval
-│   ├── rag_crosslingual.py      # Condition C — cross-lingual RAG
-│   └── data.ipynb               # Exploratory notebook
+│   ├── build_wiki_index.py           # Build English Wikipedia FAISS index
+│   ├── build_telugu_index.py         # Build Telugu Wikipedia FAISS index
+│   ├── baseline.py                   # Condition A — no retrieval
+│   ├── rag.py                        # Condition C — cross-lingual RAG
+│   ├── rag_monolingual.py            # Condition B — monolingual Telugu RAG
+│   ├── rag_combined.py               # Condition D — combined EN + TE RAG
+│   ├── retrieval_utils.py            # Shared load_index / retrieve helpers
+│   ├── evaluate.py                   # Compute EM, Chr-3, RLC across conditions
+│   ├── index.py                      # Build TyDi QA English FAISS index
+│   └── data.ipynb                    # Exploratory notebook
+├── report/
+│   ├── midway_report.tex
+│   └── references.bib
 ├── requirements.txt
 └── README.md
 ```
@@ -123,7 +163,7 @@ pip install -r requirements.txt
 ### Step 1 — Download and cache TyDi QA
 
 ```python
-from datasets import load_dataset, load_from_disk
+from datasets import load_dataset
 
 tydi = load_dataset("tydiqa", "secondary_task")
 telugu = tydi["train"].filter(lambda x: x["id"].startswith("telugu-"))
@@ -133,65 +173,81 @@ telugu.save_to_disk("data/tydiqa_telugu_train")
 english.save_to_disk("data/tydiqa_english_train")
 ```
 
-### Step 2 — Build the Wikipedia FAISS index (run on SCC GPU node)
+### Step 2 — Build the English Wikipedia FAISS index (SCC GPU node)
 
 ```bash
 python scripts/build_wiki_index.py
 ```
 
-This downloads 50k English Wikipedia articles, chunks them into 200-word passages with 50-word overlap, encodes them with `BAAI/bge-m3`, and saves the FAISS index to `data/index/`.
+Indexes 50k English Wikipedia articles (200-word chunks, 50-word overlap) with `BAAI/bge-m3`. Saves to `data/index/wiki_bge.faiss` and `data/index/wiki_passages.npy`.
 
 > Takes ~30 minutes on a V100 GPU.
 
-### Step 3 — Build the Wikipedia FAISS index (run on Kaggle code)
+### Step 3 — Build the Telugu Wikipedia FAISS index (SCC GPU node)
 
 ```bash
 python scripts/build_telugu_index.py
 ```
 
-This downloads 50k Telugu Wikipedia articles, chunks them into 200-word passages with 50-word overlap, encodes them with `BAAI/bge-m3`, and saves the FAISS index to `data/index/`.
+Indexes 20k Telugu Wikipedia articles with the same chunking and encoder. Saves to `data/index/telugu_wiki_bge.faiss` and `data/index/telugu_wiki_passages.npy`.
 
-> Takes ~75 minutes on a T4 GPU.
+> Takes ~15 minutes on a V100 GPU.
 
-### Step 4 — Run Condition A (no retrieval baseline)
+### Step 4 — Run all conditions
 
 ```bash
+# Condition A — no retrieval baseline
 python scripts/baseline.py
-```
 
-Outputs predictions to stdout. Results saved to `data/results_baseline.json`.
-
-### Step 5 — Run Condition B (Monolingual RAG (Telugu))
-
-```bash
+# Condition B — monolingual Telugu RAG
 python scripts/rag_monolingual.py
+
+# Condition C — cross-lingual English RAG (with NLLB query translation)
+python scripts/rag.py
+
+# Condition D — combined English + Telugu RAG
+python scripts/rag_combined.py
 ```
 
-Outputs predictions to stdout. Results saved to `data/results_monolingual.json`.
+All scripts use a **two-phase GPU memory strategy**: Phase 1 runs retrieval (BGE-M3 + NLLB where applicable) and frees GPU memory before Phase 2 loads Qwen for generation. This fits within a 16GB V100 for the 3B model; use a 40GB+ GPU for the 7B model.
 
-### Step 6 — Run Condition C (cross-lingual RAG)
+### Step 5 — Evaluate
 
 ```bash
-python scripts/rag_crosslingual.py
+python scripts/evaluate.py
 ```
 
-Retrieves top-3 English Wikipedia passages per Telugu query using FAISS, then generates answers with `mt0-base`. Results saved to `data/results_crosslingual_wiki.json`.
+Computes EM, Chr-3, and RLC across all result files.
+
+---
+
+## Key Findings (10-example dev set)
+
+| Condition | EM | RLC | Notes |
+|---|---|---|---|
+| A — No retrieval | 0/10 | ~0% | Hallucination, English fallback |
+| B — Monolingual TE | 1/10 | ~90% | Best for village census questions |
+| C — Cross-lingual EN | 0/10 | ~80% | English index missing India-specific articles |
+| D — Combined EN+TE | 0/10 | ~85% | Context noise hurt vs. B alone |
+
+Primary failure modes: (1) index coverage — English Wikipedia's first 50k articles skew Western; (2) NLLB mistranslates named entities (e.g., *వేప* → "beech" instead of "neem"); (3) LLM extraction errors even when relevant passage is retrieved.
 
 ---
 
 ## Notes
 
 - All scripts must be run from the project root (`crosslingual-rag-factuality/`), not from inside `scripts/`
-- `model.max_seq_length = 512` is set explicitly for `bge-m3` to avoid OOM on Apple Silicon
-- Wikipedia chunks are aligned with the FAISS index by insertion order — do not shuffle `wiki_passages.npy` independently of the index
+- `model.max_seq_length = 512` is set explicitly for `bge-m3` to avoid truncation issues
+- Wikipedia chunks are aligned with the FAISS index by insertion order — do not shuffle `*_passages.npy` independently of the index
+- The English index uses `range(50000)` which selects the first 50k articles by ID (earliest-created, skewing Western topics); random sampling would improve coverage for India-specific queries
 
 ---
 
 ## References
 
 - Clark et al. (2020). TyDi QA. *TACL*.
-- Chen et al. (2024). BGE-M3. *arXiv:2309.07597*.
+- Chen et al. (2024). BGE-M3. *arXiv:2402.03216*.
 - Costa-jussà et al. (2022). No Language Left Behind. *arXiv:2207.04672*.
 - Ranaldi et al. (2025). CrossRAG. *arXiv:2504.03616*.
 - Moon et al. (2025). Quality-Aware Translation Tagging in Multilingual RAG. *MRL 2025*.
-```
+- Chirkova et al. (2024). RAG in Multilingual Settings. *KnowLLM 2024*.
