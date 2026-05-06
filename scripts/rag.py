@@ -1,5 +1,5 @@
 from datasets import load_from_disk
-from transformers import pipeline
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
@@ -20,24 +20,25 @@ def retrieve(query, retriever, index, passages, k=5):
     scores, indices = index.search(query_embedding, k)
     return [passages[i] for i in indices[0]]
 
+def translate(text, model, tokenizer, device, src_lang="tel_Telu", tgt_lang="eng_Latn"):
+    tokenizer.src_lang = src_lang
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=256).to(device)
+    forced_bos = tokenizer.convert_tokens_to_ids(tgt_lang)
+    output = model.generate(**inputs, forced_bos_token_id=forced_bos, max_new_tokens=256)
+    return tokenizer.batch_decode(output, skip_special_tokens=True)[0]
+
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
     telugu = load_from_disk("data/tydiqa_telugu_train")
-    sample = telugu.select(range(10))
+    sample = telugu.select(range(500))
 
     # ── Phase 1: translate + retrieve (NLLB + BGE-M3) ──────────────────────
     print("Phase 1: translating and retrieving...")
 
-    translator = pipeline(
-        "translation",
-        model="facebook/nllb-200-distilled-600M",
-        src_lang="tel_Telu",
-        tgt_lang="eng_Latn",
-        device=0 if device == "cuda" else -1,
-        max_length=256,
-    )
+    tokenizer = AutoTokenizer.from_pretrained("facebook/nllb-200-distilled-600M")
+    translator_model = AutoModelForSeq2SeqLM.from_pretrained("facebook/nllb-200-distilled-600M").to(device)
 
     retriever = SentenceTransformer("BAAI/bge-m3", device=device)
     retriever.max_seq_length = 512
@@ -47,12 +48,11 @@ if __name__ == "__main__":
         "data/index/wiki_passages.npy"
     )
 
-    # Pre-compute all translations and retrievals before loading the generator
     rows = []
     for row in sample:
         question = row["question"]
         gold = row["answers"]["text"][0]
-        english_query = translator(question)[0]["translation_text"]
+        english_query = translate(question, translator_model, tokenizer, device)
         combined_query = english_query + " " + question
         retrieved = retrieve(combined_query, retriever, index, passages, k=5)
         rows.append({
@@ -64,7 +64,7 @@ if __name__ == "__main__":
         print(f"  translated: {english_query}")
 
     # Free NLLB + BGE-M3 from GPU before loading Qwen
-    del translator, retriever
+    del translator_model, tokenizer, retriever
     gc.collect()
     torch.cuda.empty_cache()
     print("Phase 1 done. GPU memory freed.")

@@ -1,7 +1,6 @@
 import json
 import re
 import unicodedata
-from itertools import product
 from pathlib import Path
 
 try:
@@ -44,6 +43,23 @@ def char_ngram_recall(prediction: str, gold: str, n: int = 3) -> float:
     return matched / len(gold_ng)
 
 
+def answer_in_prediction(prediction: str, gold: str) -> int:
+    return int(normalize(gold) in normalize(prediction))
+
+
+def token_f1(prediction: str, gold: str) -> float:
+    pred_tokens = normalize(prediction).split()
+    gold_tokens = normalize(gold).split()
+    if not pred_tokens or not gold_tokens:
+        return float(pred_tokens == gold_tokens)
+    common = sum(min(pred_tokens.count(t), gold_tokens.count(t)) for t in set(gold_tokens))
+    if common == 0:
+        return 0.0
+    precision = common / len(pred_tokens)
+    recall = common / len(gold_tokens)
+    return 2 * precision * recall / (precision + recall)
+
+
 def response_language_correct(prediction: str, target_lang: str = "te") -> int:
     if not HAS_LANGDETECT:
         return -1
@@ -56,7 +72,7 @@ def response_language_correct(prediction: str, target_lang: str = "te") -> int:
 # ── Per-condition evaluation ────────────────────────────────────────────────
 
 def evaluate(results: list, label: str) -> dict:
-    em_scores, chr3_scores, rlc_scores = [], [], []
+    em_scores, chr3_scores, aip_scores, f1_scores, rlc_scores = [], [], [], [], []
 
     for r in results:
         pred = r.get("prediction", "")
@@ -64,6 +80,8 @@ def evaluate(results: list, label: str) -> dict:
 
         em_scores.append(exact_match(pred, gold))
         chr3_scores.append(char_ngram_recall(pred, gold, n=3))
+        aip_scores.append(answer_in_prediction(pred, gold))
+        f1_scores.append(token_f1(pred, gold))
 
         rlc = response_language_correct(pred)
         if rlc >= 0:
@@ -75,6 +93,8 @@ def evaluate(results: list, label: str) -> dict:
         "n": n,
         "EM":   sum(em_scores) / n if n else 0,
         "Chr3": sum(chr3_scores) / n if n else 0,
+        "AIP":  sum(aip_scores) / n if n else 0,
+        "F1":   sum(f1_scores) / n if n else 0,
     }
     if rlc_scores:
         metrics["RLC"] = sum(rlc_scores) / len(rlc_scores)
@@ -115,19 +135,22 @@ if __name__ == "__main__":
             gold = r.get("gold", "")
             em = exact_match(pred, gold)
             c3 = char_ngram_recall(pred, gold)
+            aip = answer_in_prediction(pred, gold)
+            f1 = token_f1(pred, gold)
             q_short = r.get("question", "")[:50]
             print(f"  Q: {q_short}")
             print(f"     Gold:  {gold[:80]}")
             print(f"     Pred:  {pred[:80]}")
-            print(f"     EM={em}  Chr3={c3:.3f}")
+            print(f"     EM={em}  Chr3={c3:.3f}  AIP={aip}  F1={f1:.3f}")
             print()
 
     # Summary table
     if all_metrics:
-        print("\n" + "="*70)
-        print(f"{'Condition':<28} {'N':>4}  {'EM':>6}  {'Chr-3':>7}  {'RLC':>6}")
-        print("-"*70)
+        print("\n" + "="*80)
+        print(f"{'Condition':<28} {'N':>4}  {'EM':>6}  {'Chr-3':>7}  {'AIP':>6}  {'F1':>6}  {'RLC':>6}")
+        print("-"*80)
         for m in all_metrics:
             rlc_str = f"{m['RLC']:.3f}" if m["RLC"] is not None else "  n/a"
-            print(f"{m['condition']:<28} {m['n']:>4}  {m['EM']:>6.3f}  {m['Chr3']:>7.3f}  {rlc_str:>6}")
-        print("="*70)
+            print(f"{m['condition']:<28} {m['n']:>4}  {m['EM']:>6.3f}  {m['Chr3']:>7.3f}  {m['AIP']:>6.3f}  {m['F1']:>6.3f}  {rlc_str:>6}")
+        print("="*80)
+        print("AIP = Answer In Prediction (gold span appears anywhere in output)")

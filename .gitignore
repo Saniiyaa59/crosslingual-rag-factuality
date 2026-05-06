@@ -1,4 +1,9 @@
 data/
 .venv/
 .DS_Store
-report/
+report/.newvenv/
+hf_cache/
+__pycache__/
+*.pyc
+*.swp
+*.swo
