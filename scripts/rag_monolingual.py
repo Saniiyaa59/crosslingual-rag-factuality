@@ -12,7 +12,7 @@ if __name__ == "__main__":
 
     # Load data
     telugu = load_from_disk("data/tydiqa_telugu_train")
-    sample = telugu.select(range(10))
+    sample = telugu.select(range(500))
 
     # ── Phase 1: retrieve from Telugu Wikipedia (BGE-M3) ───────────────────
     print("Phase 1: retrieving from Telugu Wikipedia index...")
