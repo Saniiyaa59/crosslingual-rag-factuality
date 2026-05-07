@@ -98,8 +98,9 @@ Question (Telugu)
 
 - **Exact Match (EM)** — predicted string exactly matches gold answer after normalization
 - **Character 3-gram Recall (Chr-3)** — language-agnostic overlap metric suited to morphologically rich languages
-- **Response Language Correctness (RLC)** — fraction of responses generated in Telugu (detects English fallback)
-- **LLM-as-a-Judge** — GPT-4o + Claude Sonnet majority vote for semantic accuracy (planned)
+- **Answer-in-Prediction (AIP)** — whether the gold span appears anywhere in the model output (rewards generative responses that embed the answer in a sentence)
+- **Token F1** — harmonic mean of token-level precision and recall (SQuAD-style)
+- **Response Language Correctness (RLC)** — fraction of responses generated in Telugu
 
 ---
 
@@ -127,11 +128,11 @@ crosslingual-rag-factuality/
 │   ├── rag_monolingual.py            # Condition B — monolingual Telugu RAG
 │   ├── rag_combined.py               # Condition D — combined EN + TE RAG
 │   ├── retrieval_utils.py            # Shared load_index / retrieve helpers
-│   ├── evaluate.py                   # Compute EM, Chr-3, RLC across conditions
+│   ├── evaluate.py                   # Compute EM, Chr-3, AIP, F1, RLC across conditions
 │   ├── index.py                      # Build TyDi QA English FAISS index
 │   └── data.ipynb                    # Exploratory notebook
 ├── report/
-│   ├── midway_report.tex
+│   ├── final_report.tex
 │   └── references.bib
 ├── requirements.txt
 └── README.md
@@ -217,20 +218,22 @@ All scripts use a **two-phase GPU memory strategy**: Phase 1 runs retrieval (BGE
 python scripts/evaluate.py
 ```
 
-Computes EM, Chr-3, and RLC across all result files.
+Computes EM, Chr-3, AIP, F1, and RLC across all result files and prints a summary table.
 
 ---
 
-## Key Findings (10-example dev set)
+## Key Findings (500-example evaluation)
 
-| Condition | EM | RLC | Notes |
-|---|---|---|---|
-| A — No retrieval | 0/10 | ~0% | Hallucination, English fallback |
-| B — Monolingual TE | 1/10 | ~90% | Best for village census questions |
-| C — Cross-lingual EN | 0/10 | ~80% | English index missing India-specific articles |
-| D — Combined EN+TE | 0/10 | ~85% | Context noise hurt vs. B alone |
+| Condition | EM | Chr-3 | AIP | F1 | RLC |
+|---|---|---|---|---|---|
+| A — No retrieval | 0.000 | 0.093 | 0.028 | 0.012 | 0.998 |
+| B — Monolingual TE | 0.010 | 0.310 | 0.168 | 0.065 | 1.000 |
+| C — Cross-lingual EN | 0.000 | 0.092 | 0.040 | 0.012 | 1.000 |
+| D — Combined EN+TE | **0.010** | **0.338** | **0.210** | **0.075** | 1.000 |
 
-Primary failure modes: (1) index coverage — English Wikipedia's first 50k articles skew Western; (2) NLLB mistranslates named entities (e.g., *వేప* → "beech" instead of "neem"); (3) LLM extraction errors even when relevant passage is retrieved.
+**Key result:** The hypothesis that C > B did not hold. Cross-lingual English RAG (C) performs nearly the same as no retrieval (A), while monolingual Telugu RAG (B) provides substantial improvement. The combined index (D) achieves the best results overall.
+
+Primary failure modes: (1) **Index coverage** — English Wikipedia's first 50k articles skew Western, missing most India-specific topics; (2) **NLLB mistranslation** — named entities like *వేప* → "beech" instead of "neem"; (3) **Answer extraction errors** — Qwen extracts the wrong numeric entity from an otherwise relevant passage.
 
 ---
 
