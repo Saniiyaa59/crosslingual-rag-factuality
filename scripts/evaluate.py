@@ -66,7 +66,7 @@ def response_language_correct(prediction: str, target_lang: str = "te") -> int:
     try:
         return int(detect(prediction) == target_lang)
     except Exception:
-        return 0
+        return -1
 
 
 # ── Per-condition evaluation ────────────────────────────────────────────────
